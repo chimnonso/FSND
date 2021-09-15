@@ -1,3 +1,4 @@
+import json
 import os
 from flask import Flask, request, abort, jsonify
 from flask_sqlalchemy import SQLAlchemy
@@ -50,10 +51,11 @@ def create_app(test_config=None):
   '''
   @app.route("/categories")
   def get_categories():
-    categories = Category.query.order_by(Category.id).all()
+    categories = Category.query.all()
     if len(categories) == 0:
       abort(404)
     formatted_categories = {category.id: category.type for category in categories}
+    # formatted_categories = [cat.format() for cat in categories]
 
     return jsonify({
       "success": True,
@@ -100,6 +102,29 @@ def create_app(test_config=None):
   This removal will persist in the database and when you refresh the page. 
   '''
 
+  @app.route("/questions/<int:question_id>", methods=["DELETE"])
+  def remove_question(question_id):
+
+    try:
+      question = Question.query.filter(Question.id == question_id).one_or_none()
+
+      if question is None:
+        abort(404)
+
+      question.delete()
+      selection = Question.query.order_by(Question.id).all()
+      current_questions = paginate(request, selection)
+
+      return jsonify({
+        "success": True,
+        "deleted": question_id,
+        "questions": current_questions,
+        "total_questions": len(selection)
+      })
+      
+    except:
+      abort(422)
+
   '''
   @TODO: 
   Create an endpoint to POST a new question, 
@@ -110,6 +135,53 @@ def create_app(test_config=None):
   the form will clear and the question will appear at the end of the last page
   of the questions list in the "List" tab.  
   '''
+
+  @app.route("/questions", methods=["POST"])
+  def create_question():
+    body = request.get_json()
+
+    question = body.get("question", None)
+    answer = body.get("answer", None)
+    difficulty = body.get("difficulty", None)
+    category = body.get("category", None)
+    search_term  = body.get("searchTerm", None)
+    
+
+    if search_term:
+      search_questions = Question.query.filter(Question.question.ilike(f"%{search_term}%")).all()
+      questions = paginate(request, search_questions)
+    
+      return jsonify({
+        "success": True,
+        "questions": questions,
+        "total_questions": len(search_questions),
+        "current_category": None
+      })
+
+    else:
+
+      if (question is None or answer is None or difficulty is None or category is None):
+        abort(422)
+
+      categories = Category.query.all()
+      formatted_categories = {category.id: category.type for category in categories}
+
+      try:
+        new_question = Question(question=question, answer=answer, difficulty=difficulty, category=category)
+        new_question.insert()
+
+        selection = Question.query.order_by(Question.id).all()
+        current_questions = paginate(request, selection)
+
+        return jsonify({
+          "success": True,
+          # "questions": current_questions,
+          "created": new_question.id,
+          # "total_questions": len(selection),
+          # "categories": categories,
+        })    
+      except:
+        abort(405)
 
   '''
   @TODO: 
@@ -131,6 +203,21 @@ def create_app(test_config=None):
   category to be shown. 
   '''
 
+  @app.route("/categories/<int:category_id>/questions")
+  def get_questions_of_category(category_id):
+    try:
+      selection = Question.query.filter(Question.category == category_id).all()
+      questions = paginate(request, selection)
+
+      return jsonify({
+        "success": True,
+        "current_category": category_id,
+        "total_questions": len(selection),
+        "questions": questions,
+      })
+    except:
+      abort(404)
+
 
   '''
   @TODO: 
@@ -143,6 +230,33 @@ def create_app(test_config=None):
   one question at a time is displayed, the user is allowed to answer
   and shown whether they were correct or not. 
   '''
+
+  @app.route("/quizzes", methods=["POST"])
+  def play_quiz():
+    body = request.get_json()
+
+    if body == None or 'quiz_category' not in body.keys():
+      abort(422)
+
+    previous_question = body.get("previous_questions")
+    quiz_category = body.get("quiz_category")['id']
+    print(previous_question)
+
+    final_list = []
+
+    query = Question.query.filter(Question.category==quiz_category, Question.id.notin_((previous_question))).all()  
+
+    if len(query) > 0:
+      question = random.choice(query).format()
+    else:
+      question = None
+    
+    
+    return jsonify({
+      "success": True,
+      "question": question
+    })
+    
 
   '''
   @TODO: 
@@ -157,6 +271,23 @@ def create_app(test_config=None):
       "error": 404,
       "message": "resource not found"
     }), 404
+
+  @app.errorhandler(422)
+  def unprocessable(error):
+    return jsonify({
+      "success": False,
+      "error": 422,
+      "message": "unprocessable"
+    }), 422
+
+
+  @app.errorhandler(405)
+  def unprocessable(error):
+    return jsonify({
+      "success": False,
+      "error": 405,
+      "message": "method not allowed"
+    }), 405
   
   return app
 
